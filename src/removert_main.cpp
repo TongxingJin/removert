@@ -6,7 +6,7 @@ int main(int argc, char** argv)
     ROS_INFO("\033[1;32m----> Removert Main Started.\033[0m");
 
     Removerter RMV;
-    RMV.run();
+    // RMV.run();
 
     ros::spin();
 

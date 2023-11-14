@@ -19,6 +19,7 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   message_generation
   image_transport
+  livox_ros_driver
 )
 
 find_package(OpenMP REQUIRED)

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "removert/RosParamServer.h"
+#include <livox_ros_driver/CustomMsg.h>
+#include <chrono>
 
 class Removerter : public RosParamServer
 {
@@ -32,7 +34,7 @@ private:
     pcl::KdTreeFLANN<PointType>::Ptr kdtree_map_global_curr_;
     pcl::KdTreeFLANN<PointType>::Ptr kdtree_scan_global_curr_;
 
-    pcl::PointCloud<PointType>::Ptr map_global_orig_;
+    pcl::PointCloud<PointType>::Ptr map_global_orig_;//! 不降采样的
 
     pcl::PointCloud<PointType>::Ptr map_global_curr_; // the M_i. i.e., removert is: M1 -> S1 + D1, D1 -> M2 , M2 -> S2 + D2 ... repeat ... 
     pcl::PointCloud<PointType>::Ptr map_local_curr_;
@@ -58,6 +60,11 @@ private:
     const bool kUseSubsetMapCloud = false; 
     const float kBallSize = 80.0; // meter
 
+    int current_index_ = 0;
+    bool map_range_img_initialized_ = false;
+    // pcl::PointCloud<PointType>::Ptr current_scan_;
+    cv::Mat map_range_img_;
+    ros::Subscriber livox_cloud_sub_;
 public:
     Removerter();
     ~Removerter();
@@ -128,5 +135,8 @@ public:
 
     void saveStaticScan( int _scan_idx, const pcl::PointCloud<PointType>::Ptr& _ptcloud );
     void saveDynamicScan( int _scan_idx, const pcl::PointCloud<PointType>::Ptr& _ptcloud );
+
+    void livoxPointCloudCallback(const livox_ros_driver::CustomMsg::ConstPtr& livox_cloud_msg);
+
 
 }; // Removerter

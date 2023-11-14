@@ -32,13 +32,13 @@ Removerter::Removerter()
     nh.param<int>("removert/num_nn_points_within", kNumKnnPointsToCompare, 3); // using higher, more strict static 
     nh.param<float>("removert/dist_nn_points_within", kScanKnnAndMapKnnAvgDiffThreshold, 0.1); // using smaller, more strict static 
 
-    if( save_pcd_directory_.substr(save_pcd_directory_.size()-1, 1) != std::string("/") )
-        save_pcd_directory_ = save_pcd_directory_ + "/";
-    fsmkdir(save_pcd_directory_);
-    scan_static_save_dir_ = save_pcd_directory_ + "scan_static"; fsmkdir(scan_static_save_dir_);
-    scan_dynamic_save_dir_ = save_pcd_directory_ + "scan_dynamic"; fsmkdir(scan_dynamic_save_dir_);
-    map_static_save_dir_ = save_pcd_directory_ + "map_static"; fsmkdir(map_static_save_dir_);
-    map_dynamic_save_dir_ = save_pcd_directory_ + "map_dynamic"; fsmkdir(map_dynamic_save_dir_);
+    // if( save_pcd_directory_.substr(save_pcd_directory_.size()-1, 1) != std::string("/") )
+    //     save_pcd_directory_ = save_pcd_directory_ + "/";
+    // fsmkdir(save_pcd_directory_);
+    // scan_static_save_dir_ = save_pcd_directory_ + "scan_static"; fsmkdir(scan_static_save_dir_);
+    // scan_dynamic_save_dir_ = save_pcd_directory_ + "scan_dynamic"; fsmkdir(scan_dynamic_save_dir_);
+    // map_static_save_dir_ = save_pcd_directory_ + "map_static"; fsmkdir(map_static_save_dir_);
+    // map_dynamic_save_dir_ = save_pcd_directory_ + "map_dynamic"; fsmkdir(map_dynamic_save_dir_);
 
     allocateMemory();
 
@@ -54,6 +54,8 @@ Removerter::Removerter()
 
     static_curr_scan_publisher_ = nh.advertise<sensor_msgs::PointCloud2> ("removert/scan_single_local_static", 1);
     dynamic_curr_scan_publisher_ = nh.advertise<sensor_msgs::PointCloud2> ("removert/scan_single_local_dynamic", 1);
+
+    livox_cloud_sub_ = nh.subscribe<livox_ros_driver::CustomMsg>("/livox/lidar", 10, &Removerter::livoxPointCloudCallback, this);
 
 } // ctor
 
@@ -200,7 +202,7 @@ std::pair<cv::Mat, cv::Mat> Removerter::map2RangeImg(const pcl::PointCloud<Point
         int lower_bound_col_idx {0};
         int upper_bound_row_idx {kNumRimgRow - 1}; 
         int upper_bound_col_idx {kNumRimgCol - 1};
-        int pixel_idx_row = int(std::min(std::max(std::round(kNumRimgRow * (1 - (rad2deg(sph_point.el) + (kVFOV/float(2.0))) / (kVFOV - float(0.0)))), float(lower_bound_row_idx)), float(upper_bound_row_idx)));
+        int pixel_idx_row = int(std::min(std::max(std::round(kNumRimgRow * (1 - (rad2deg(sph_point.el) + float(7.0)) / (kVFOV - float(0.0)))), float(lower_bound_row_idx)), float(upper_bound_row_idx)));
         int pixel_idx_col = int(std::min(std::max(std::round(kNumRimgCol * ((rad2deg(sph_point.az) + (kHFOV/float(2.0))) / (kHFOV - float(0.0)))), float(lower_bound_col_idx)), float(upper_bound_col_idx)));
 
         float curr_range = sph_point.r;
@@ -250,7 +252,7 @@ cv::Mat Removerter::scan2RangeImg(const pcl::PointCloud<PointType>::Ptr& _scan,
         int lower_bound_col_idx {0};
         int upper_bound_row_idx {kNumRimgRow - 1}; 
         int upper_bound_col_idx {kNumRimgCol - 1};
-        int pixel_idx_row = int(std::min(std::max(std::round(kNumRimgRow * (1 - (rad2deg(sph_point.el) + (kVFOV/float(2.0))) / (kVFOV - float(0.0)))), float(lower_bound_row_idx)), float(upper_bound_row_idx)));
+        int pixel_idx_row = int(std::min(std::max(std::round(kNumRimgRow * (1 - (rad2deg(sph_point.el) + float(7.0)) / (kVFOV - float(0.0)))), float(lower_bound_row_idx)), float(upper_bound_row_idx)));
         int pixel_idx_col = int(std::min(std::max(std::round(kNumRimgCol * ((rad2deg(sph_point.az) + (kHFOV/float(2.0))) / (kHFOV - float(0.0)))), float(lower_bound_col_idx)), float(upper_bound_col_idx)));
 
         float curr_range = sph_point.r;
@@ -506,7 +508,7 @@ std::vector<int> Removerter::calcDescrepancyAndParseDynamicPointIdx
             float adaptive_dynamic_descrepancy_threshold = adaptive_coeff * this_range; // adaptive descrepancy threshold 
             // float adaptive_dynamic_descrepancy_threshold = 0.1;
 
-            if( this_diff < kValidDiffUpperBound // exclude no-point pixels either on scan img or map img (100 is roughly 100 meter)
+            if( std::fabs(this_diff) < kValidDiffUpperBound // exclude no-point pixels either on scan img or map img (100 is roughly 100 meter)
                 && this_diff > adaptive_dynamic_descrepancy_threshold /* dynamic */) 
             {  // dynamic
                 int this_point_idx_in_global_map = _map_rimg_ptidx.at<int>(row_idx, col_idx);
@@ -870,7 +872,7 @@ void Removerter::run( void )
     makeGlobalMap();
 
     // map-side removals
-    for(float _rm_res: remove_resolution_list_) {
+    for(float _rm_res: remove_resolution_list_) {//todo jin:this should be changed in yaml
         removeOnce( _rm_res );
     } 
 
@@ -888,4 +890,70 @@ void Removerter::run( void )
     // scan-side removals
     scansideRemovalForEachScanAndSaveThem();
 
+}
+
+void Removerter::livoxPointCloudCallback(const livox_ros_driver::CustomMsg::ConstPtr& livox_cloud_msg){
+    pcl::PointCloud<pcl::PointXYZI> current_scan;
+    for (uint i = 0; i < livox_cloud_msg->point_num; ++i) {
+      pcl::PointXYZI p;
+      p.x = livox_cloud_msg->points[i].x;
+      p.y = livox_cloud_msg->points[i].y;
+      p.z = livox_cloud_msg->points[i].z;
+      p.intensity = livox_cloud_msg->points[i].reflectivity;
+      current_scan.points.push_back(p);
+    }
+    if(current_index_ < 50){//todo
+      *map_global_orig_ += current_scan;
+    }else{
+      auto start_time = std::chrono::high_resolution_clock::now();
+      std::pair<int, int> rimg_shape = resetRimgSize(kFOV, remove_resolution_list_[0]);
+      if(!map_range_img_initialized_){
+        *map_global_curr_ = *map_global_orig_;// used to be the accumulated and downsampled map, and this should be iterated
+        *map_local_curr_ = *map_global_curr_;
+        map_range_img_ = scan2RangeImg(map_local_curr_, kFOV, rimg_shape); // the most time comsuming part 2 -> so openMP applied inside
+        map_range_img_initialized_ = true;
+      }
+      auto [scan_rimg, scan_rimg_ptidx] = map2RangeImg(current_scan.makeShared(), kFOV, rimg_shape);
+      // diff range img 
+      const int kNumRimgRow = rimg_shape.first;
+      const int kNumRimgCol = rimg_shape.second;
+      cv::Mat diff_rimg = cv::Mat(kNumRimgRow, kNumRimgCol, CV_32FC1, cv::Scalar::all(0.0)); // float matrix, save range value 
+      cv::absdiff(scan_rimg, map_range_img_, diff_rimg);
+      cv::Mat diff_image = map_range_img_ - scan_rimg;
+
+      // parse dynamic points' indexes: rule: If a pixel value of diff_rimg is larger, scan is the further - means that pixel of submap is likely dynamic.
+      std::vector<int> this_scan_dynamic_point_indexes = calcDescrepancyAndParseDynamicPointIdx(map_range_img_, diff_image, scan_rimg_ptidx);
+      std::sort(this_scan_dynamic_point_indexes.begin(), this_scan_dynamic_point_indexes.end());
+      // visualization 
+      pubRangeImg(scan_rimg, scan_rimg_msg_, scan_rimg_msg_publisher_, kRangeColorAxis);
+      pubRangeImg(map_range_img_, map_rimg_msg_, map_rimg_msg_publisher_, kRangeColorAxis);
+      pubRangeImg(diff_rimg, diff_rimg_msg_, diff_rimg_msg_publisher_, kRangeColorAxisForDiff);
+
+      // std::pair<float, float> kRangeColorAxisForPtIdx {0.0, float(map_global_curr_->points.size())};
+      // pubRangeImg(map_rimg_ptidx, map_rimg_ptidx_msg_, map_rimg_ptidx_msg_publisher_, kRangeColorAxisForPtIdx);
+
+      publishPointcloud2FromPCLptr(scan_publisher_, current_scan.makeShared());
+
+      pcl::ExtractIndices<PointType> extractor;
+      boost::shared_ptr<std::vector<int>> index_ptr = boost::make_shared<std::vector<int>>(this_scan_dynamic_point_indexes);
+      extractor.setInputCloud(current_scan.makeShared()); 
+      extractor.setIndices(index_ptr);
+      extractor.setNegative(true); // If set to true, you can extract point clouds outside the specified index
+
+      pcl::PointCloud<pcl::PointXYZI> current_scan_static;
+      // parse 
+      extractor.filter(current_scan_static);
+      publishPointcloud2FromPCLptr(static_curr_scan_publisher_, current_scan_static.makeShared());
+      extractor.setNegative(false);
+      pcl::PointCloud<pcl::PointXYZI> current_scan_dynamic;
+      extractor.filter(current_scan_dynamic);
+      publishPointcloud2FromPCLptr(dynamic_curr_scan_publisher_, current_scan_dynamic.makeShared());
+      std::cout << "Dynamic points size: " << current_scan_dynamic.size() << ", ratio: " << float(current_scan_dynamic.size()) / current_scan.size() << std::endl;
+      std::cout << "Staticic points size: " << current_scan_static.size() << ", ratio: " << float(current_scan_static.size()) / current_scan.size() << std::endl;
+      auto end_time = std::chrono::high_resolution_clock::now();
+      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+      std::cout << "Elapsed time: " << duration.count() << " milliseconds" << std::endl;
+      std::cout << "--------------------------" << std::endl;
+    }
+    current_index_++;
 }
